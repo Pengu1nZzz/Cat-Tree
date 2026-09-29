@@ -1,0 +1,86 @@
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: deployment/local/nginx/Dockerfile
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - ./:/var/www
+    depends_on:
+      php-fpm:
+        condition: service_started
+    networks:
+      - app-network
+
+  php-fpm:
+    build:
+      context: .
+      dockerfile: deployment/local/php-fpm/Dockerfile
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      DB_CONNECTION: ${DB_CONNECTION:-pgsql}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_DATABASE: ${DB_DATABASE:-product_catalog}
+      DB_USERNAME: ${DB_USERNAME:-product_catalog}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-null}
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "${FORWARD_DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-product_catalog}
+      POSTGRES_USER: ${DB_USERNAME:-product_catalog}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-product_catalog} -d ${DB_DATABASE:-product_catalog}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${FORWARD_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
